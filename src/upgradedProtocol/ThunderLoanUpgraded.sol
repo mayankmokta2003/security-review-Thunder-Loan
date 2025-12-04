@@ -261,6 +261,7 @@ contract ThunderLoanUpgraded is Initializable, OwnableUpgradeable, UUPSUpgradeab
         fee = (valueOfBorrowedToken * s_flashLoanFee) / FEE_PRECISION;
     }
 
+    // @audit-info- event sould be emitted
     function updateFlashLoanFee(uint256 newFee) external onlyOwner {
         if (newFee > FEE_PRECISION) {
             revert ThunderLoan__BadNewFee();
