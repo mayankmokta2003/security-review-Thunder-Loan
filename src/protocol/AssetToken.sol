@@ -93,6 +93,7 @@ contract AssetToken is ERC20 {
         }
         s_exchangeRate = newExchangeRate;
         emit ExchangeRateUpdated(s_exchangeRate);
+        
     }
 
     function getExchangeRate() external view returns (uint256) {

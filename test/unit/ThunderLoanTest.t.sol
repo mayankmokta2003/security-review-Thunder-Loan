@@ -87,4 +87,28 @@ contract ThunderLoanTest is BaseTest {
         assertEq(mockFlashLoanReceiver.getBalanceDuring(), amountToBorrow + AMOUNT);
         assertEq(mockFlashLoanReceiver.getBalanceAfter(), AMOUNT - calculatedFee);
     }
+
+
+    function testRedeemAferLoad() public setAllowedToken{
+        // amount = bound(amount,1e18,3e18);
+        vm.startPrank(liquidityProvider);
+        tokenA.mint(liquidityProvider,10e18);
+        uint256 startingBal = tokenA.balanceOf(liquidityProvider);
+        tokenA.approve(address(thunderLoan), 10e18);
+        thunderLoan.deposit(tokenA, 2e18);
+        vm.stopPrank();
+        vm.startPrank(user);
+        tokenA.mint(address(mockFlashLoanReceiver),10e18);
+        thunderLoan.flashloan(address(mockFlashLoanReceiver), tokenA, 1e18, "");
+        vm.stopPrank();
+        vm.startPrank(liquidityProvider);
+        thunderLoan.redeem(tokenA, 2e18);
+        vm.stopPrank();
+        uint256 endingBal = tokenA.balanceOf(liquidityProvider);
+        assert(startingBal < endingBal);
+        console.log("startingBal",startingBal);
+        console.log("endingBal",endingBal);
+    }
+
+
 }
