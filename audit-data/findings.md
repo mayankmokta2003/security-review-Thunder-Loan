@@ -64,3 +64,70 @@ function deposit(IERC20 token, uint256 amount) external revertIfZero(amount) rev
     }
 ```
 
+
+
+[H-1] TITLE (Root Cause -> Impact) There is storage collision happening between `ThunderLoan::s_flashLoanFee` and `ThunderLoanUpgraded::s_flashLoanFee`.
+
+Description: The order of storage variables in the `ThunderLoan` is different from `ThunderLoanUpgraded`.
+
+In the contract `ThunderLoan` the order is: 
+
+```javascript
+    uint256 private s_feePrecision;
+    uint256 private s_flashLoanFee;
+```
+
+And in the contract `ThunderLoanUpgraded` the order is: 
+```javascript
+    uint256 private s_flashLoanFee;
+    uint256 public constant FEE_PRECISION = 1e18;
+```
+
+Due to how the concept of storage works in solidity the `s_flashLoanFee` will get its value over writen by `s_feePrecision`. This can totally break the protocol as wrong values will get assigned.
+
+
+Impact: Due to this the `s_flashLoanFee` will get its value over writen by `s_feePrecision`. And due to this many errors can happen like user will get wrong fee charged.
+
+Proof of Concept: Consider adding the below test in your `ThunderLoanTest.t.sol`.
+
+<details>
+<summary>Proof of Code</summary>
+
+```javascript
+    function testStorageCollisionBreaks() public {
+        uint256 feeBeforeUpgrade = thunderLoan.getFee();
+        ThunderLoanUpgraded upgrade = new ThunderLoanUpgraded();
+        thunderLoan.upgradeToAndCall(address(upgrade), "");
+        uint256 feeAfterUpgrade = upgrade.getFee();
+        console.log("feeBeforeUpgrade",feeBeforeUpgrade);
+        console.log("feeAfterUpgrade",feeAfterUpgrade);
+        assert(feeBeforeUpgrade != feeAfterUpgrade);
+    }
+```
+
+</details>
+
+Recommended Mitigation: Consider using same order of storage variables in your `ThunderLoanUpgraded` as its used in `ThunderLoan`.
+
+Receommended to add the following changes in your `ThunderLoanUpgraded` contract.
+
+```diff
+-    uint256 private s_flashLoanFee;
+-    uint256 public constant FEE_PRECISION = 1e18;
++    uint256 public FEE_PRECISION = 1e18;
++    uint256 private s_flashLoanFee;
+    
+```
+
+
+
+
+[H-3] TITLE (Root Cause -> Impact) 
+
+Description:
+
+Impact:
+
+Proof of Concept:
+
+Recommended Mitigation:
