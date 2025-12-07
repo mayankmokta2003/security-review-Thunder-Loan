@@ -138,6 +138,26 @@ contract ThunderLoanTest is BaseTest {
         console.log("endingBal", endingBal);
     }
 
+
+    function testUserCannotRedeemDepositedTokens() public {
+        vm.prank(thunderLoan.owner());
+        thunderLoan.setAllowedToken(tokenA, true);
+        address may = makeAddr("may");
+        vm.startPrank(may);
+        tokenA.mint(may,10e18);
+        tokenA.approve(address(thunderLoan),10e18);
+        thunderLoan.deposit(tokenA, 5e18);
+        vm.stopPrank();
+        vm.prank(thunderLoan.owner());
+        thunderLoan.setAllowedToken(tokenA, false);
+        vm.prank(may);
+        vm.expectRevert();
+        thunderLoan.redeem(tokenA, 5e18);
+    }
+
+
+
+
     function testOracleManipulationHappening() public {
         thunderLoan = new ThunderLoan();
         ERC1967Proxy proxy = new ERC1967Proxy(address(thunderLoan), "");

