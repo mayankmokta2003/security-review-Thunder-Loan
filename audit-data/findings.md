@@ -402,3 +402,111 @@ function setAllowedToken(IERC20 token, bool allowed) external onlyOwner returns 
 
 ```
 
+
+[L-1] TITLE (Root Cause -> Impact) Mathematic Operations Handled Without Precision in `getCalculatedFee` Function in `ThunderLoan.sol`.
+
+Description: In a manual review of the `ThunderLoan.sol` contract, it was discovered that the mathematical operations within the `getCalculatedFee` function do not handle precision appropriately. Specifically, the calculations in this function could lead to precision loss when processing fees. This issue is of low priority but may impact the accuracy of fee calculations.
+
+```javascript
+        uint256 valueOfBorrowedToken = (amount * getPriceInWeth(address(token))) / s_feePrecision;
+        fee = (valueOfBorrowedToken * s_flashLoanFee) / s_feePrecision;
+```
+
+Impact: This issue is assessed as low impact. While the contract continues to operate correctly, the precision loss during fee calculations could affect the final fee amounts. This discrepancy may result in fees that are marginally different from the expected values.
+
+
+Recommended Mitigation: To mitigate the risk of precision loss during fee calculations, it is recommended to handle mathematical operations differently within the `getCalculatedFee` function. One of the following actions should be taken:
+
+Change the order of operations to perform multiplication before division. This reordering can help maintain precision. Utilize a specialized library, such as `math.sol`, designed to handle mathematical operations without precision loss. By implementing one of these recommendations, the accuracy of fee calculations can be improved, ensuring that fees align more closely with expected values.
+
+
+
+
+[L-2] TITLE (Root Cause -> Impact) function `updateFlashLoanFee` should emit an event.
+
+Description: in the function `ThunderLoan::updateFlashLoanFee` the state of a variable is getting change so its best practise to emit an event.
+
+Impact: The impact of this could be significant because the `s_flashLoanFee` is used to calculate the cost of the flash loan. If the fee changes and an off-chain service or user is not aware of the change because they didn't query the contract state at the right time, they could end up paying a different fee than they expected.
+
+Recommended Mitigation: Emit an event for critical parameter changes.
+
+```diff
++ event FeeUpdated(uint256 indexed newFee);
+
+  function updateFlashLoanFee(uint256 newFee) external onlyOwner {
+        if (newFee > s_feePrecision) {
+            revert ThunderLoan__BadNewFee();
+        }
+        s_flashLoanFee = newFee;
++        emit FeeUpdated(s_flashLoanFee);
+    }
+```
+
+
+
+[I-1] TITLE (Root Cause -> Impact) `ThunderLoan::getAssetFromToken` function can be external instead of public
+
+Description: The function `getAssetFromToken` should be external as it not been used anywhere in the same contract.
+
+Recommended Mitigation: Add the following changes in the `getAssetFromToken` function.
+
+```diff
+-    function getAssetFromToken(IERC20 token) public view returns (AssetToken) {
++    function getAssetFromToken(IERC20 token) external view returns (AssetToken) {        
+        return s_tokenToAssetToken[token];
+    }
+```
+
+
+
+
+
+[I-2] TITLE (Root Cause -> Impact) `ThunderLoan::isCurrentlyFlashLoaning` function can be external instead of public
+
+Description: The function `isCurrentlyFlashLoaning` should be external as it not been used anywhere in the same contract.
+
+Recommended Mitigation:
+
+```diff
+-    function isCurrentlyFlashLoaning(IERC20 token) public view returns (bool) {
++    function isCurrentlyFlashLoaning(IERC20 token) external view returns (bool) {    
+        return s_currentlyFlashLoaning[token];
+    }
+```
+
+
+
+[I-3] TITLE (Root Cause -> Impact) `ThunderLoan::repay` function can be external instead of public
+
+Description: The function `repay` should be external as it not been used anywhere in the same contract.
+
+Recommended Mitigation:
+
+```diff
+-       function repay(IERC20 token, uint256 amount) public {
++       function repay(IERC20 token, uint256 amount) external {
+        if (!s_currentlyFlashLoaning[token]) {
+            revert ThunderLoan__NotCurrentlyFlashLoaning();
+        }
+        AssetToken assetToken = s_tokenToAssetToken[token];
+        token.safeTransferFrom(msg.sender, address(assetToken), amount);
+    }
+    }
+```
+
+
+
+
+
+[I-4] TITLE (Root Cause -> Impact) `ThunderLoan::ThunderLoan__ExhangeRateCanOnlyIncrease` error is not been used.
+
+Description: the error `ThunderLoan__ExhangeRateCanOnlyIncrease` has not been used in the contract, so it should be removed.
+
+
+Recommended Mitigation: Add the following changes in the `ThunderLoan` contract.
+
+```diff
+-       error ThunderLoan__ExhangeRateCanOnlyIncrease();
+        error ThunderLoan__NotCurrentlyFlashLoaning();
+```
+
