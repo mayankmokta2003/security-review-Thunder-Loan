@@ -18,7 +18,7 @@ header-includes:
     \vspace{1cm}
     {\Large Version 1.0\par}
     \vspace{2cm}
-    {\Large\itshape Cyfrin.io\par}
+    {\Large\itshape Mayank\par}
     \vfill
     {\large \today\par}
 \end{titlepage}
@@ -74,7 +74,7 @@ We use the [CodeHawks](https://docs.codehawks.com/hawks-auditors/how-to-evaluate
 **Below we have our commit hash**
 
 ```
-789c587af8fd5c0666505e062f9635f4fb352fff
+4d7e60047613b592f58cf9709ae17ce1fb5a2b0b
 ```
 
 
